@@ -1,4 +1,4 @@
-# Small Gstreamer Plugin to make use of NVidia NPP
+# Small Gstreamer Plugin to make use of Nvidia NPP
 
 ## Background
 
