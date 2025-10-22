@@ -40,19 +40,18 @@
  * Boston, MA 02111-1307, USA.
  */
 
-#ifndef __GST_MYNPPFILTER_H__
-#define __GST_MYNPPFILTER_H__
+#ifndef GST_MYNPPFILTER_H_
+#define GST_MYNPPFILTER_H_
 
 #include <gst/gst.h>
 #include <gst/base/gstbasetransform.h>
 #include <gst/video/video.h>
 
-#include <ImagesNPP.h>
 #include <cuda_runtime.h>
 #include <npp.h>
-
 #include <helper_cuda.h>
 #include <helper_string.h>
+#include <ImagesNPP.h>
 
 G_BEGIN_DECLS
 
@@ -75,7 +74,7 @@ struct _GstMyNppFilter
   // Input video info (resolution, color format, framerate, etc)
   GstVideoInfo video_info;
 
-  npp::ImageNPP_8u_C3 *npp_image_p;
+  npp::ImageNPP_8u_C3* npp_image;
 
   // GPU ID on which we expect to execute the task
   guint gpu_id;
@@ -83,8 +82,6 @@ struct _GstMyNppFilter
   gboolean silent;
 };
 
-G_DEFINE_TYPE (GstMyNppFilter, gst_my_npp_filter, GST_TYPE_BASE_TRANSFORM)
-
 G_END_DECLS
 
-#endif /* __GST_MYNPPFILTER_H__ */
+#endif // GST_MYNPPFILTER_H_
