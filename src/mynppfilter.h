@@ -81,6 +81,10 @@ struct _GstMyNppFilter
   npp::ImageNPP_8u_C3* npp_image32;
   npp::ImageNPP_8u_C3* npp_image33;
 
+  Npp8u* label_maker_buffer;
+  Npp32u* label_maker_dst;
+  NppiCompressedMarkerLabelsInfo* label_info_buffer;
+
   // GPU ID on which we expect to execute the task
   guint gpu_id;
 
