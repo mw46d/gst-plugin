@@ -29,7 +29,7 @@ INCLUDES  += -I/usr/include/gstreamer-1.0 -I/usr/include/glib-2.0 -I/usr/lib/x86
 LIBRARIES += -lgstcontroller-1.0 -lgstvideo-1.0 -lgstbase-1.0 -lgstreamer-1.0 -lgobject-2.0 -lglib-2.0
 
 ALL_CCFLAGS += --threads 0 -diag-suppress 1217
-LIBRARIES += -lnppisu_static -lnppif_static -lnppc_static -lnppial_static
+LIBRARIES += -lnppisu_static -lnppif_static -lnppc_static -lnppial_static -lnppitc_static -lnppicc_static
 
 SAMPLE_ENABLED := 1
 

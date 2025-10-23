@@ -74,7 +74,12 @@ struct _GstMyNppFilter
   // Input video info (resolution, color format, framerate, etc)
   GstVideoInfo video_info;
 
-  npp::ImageNPP_8u_C3* npp_image;
+  npp::ImageNPP_8u_C1* npp_image11;
+  npp::ImageNPP_8u_C1* npp_image12;
+  npp::ImageNPP_8u_C1* npp_image13;
+  npp::ImageNPP_8u_C3* npp_image31;
+  npp::ImageNPP_8u_C3* npp_image32;
+  npp::ImageNPP_8u_C3* npp_image33;
 
   // GPU ID on which we expect to execute the task
   guint gpu_id;

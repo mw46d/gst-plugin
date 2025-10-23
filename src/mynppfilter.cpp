@@ -53,8 +53,9 @@
  * </refsect2>
  */
 
- #include "mynppfilter.h"
+#include "mynppfilter.h"
 
+#include <alloca.h>
 #include <iostream>
 
 #include <gst/controller/controller.h>
@@ -228,8 +229,23 @@ gst_my_npp_filter_set_caps(GstBaseTransform* base, GstCaps* incaps,
       filter->video_info.finfo->name, filter->video_info.width,
       filter->video_info.height, filter->video_info.size);
 
-  filter->npp_image =
+  filter->npp_image11 =
+    new npp::ImageNPP_8u_C1(filter->video_info.width, filter->video_info.height);
+  filter->npp_image12 =
+    new npp::ImageNPP_8u_C1(filter->video_info.width, filter->video_info.height);
+  filter->npp_image13 =
+    new npp::ImageNPP_8u_C1(filter->video_info.width, filter->video_info.height);
+  filter->npp_image31 =
     new npp::ImageNPP_8u_C3(filter->video_info.width, filter->video_info.height);
+  filter->npp_image32 =
+    new npp::ImageNPP_8u_C3(filter->video_info.width, filter->video_info.height);
+  filter->npp_image33 =
+    new npp::ImageNPP_8u_C3(filter->video_info.width, filter->video_info.height);
+
+  if (filter->npp_image11 == nullptr || filter->npp_image12 == nullptr || filter->npp_image13 == nullptr ||
+      filter->npp_image31 == nullptr || filter->npp_image32 == nullptr || filter->npp_image33 == nullptr) {
+    return FALSE;
+  }
 
   return TRUE;
 }
@@ -248,9 +264,34 @@ static gboolean
 gst_my_npp_filter_stop(GstBaseTransform* base) {
   GstMyNppFilter* filter = GST_GST_MY_NPP_FILTER(base);
 
-  if (filter->npp_image != nullptr) {
-    delete filter->npp_image;
-    filter->npp_image = nullptr;
+  if (filter->npp_image11 != nullptr) {
+    delete filter->npp_image11;
+    filter->npp_image11 = nullptr;
+  }
+
+  if (filter->npp_image12 != nullptr) {
+    delete filter->npp_image12;
+    filter->npp_image12 = nullptr;
+  }
+
+  if (filter->npp_image13 != nullptr) {
+    delete filter->npp_image13;
+    filter->npp_image13 = nullptr;
+  }
+
+  if (filter->npp_image31 != nullptr) {
+    delete filter->npp_image31;
+    filter->npp_image31 = nullptr;
+  }
+
+  if (filter->npp_image32 != nullptr) {
+    delete filter->npp_image32;
+    filter->npp_image32 = nullptr;
+  }
+
+  if (filter->npp_image33 != nullptr) {
+    delete filter->npp_image33;
+    filter->npp_image33 = nullptr;
   }
 
   if (filter->cuda_stream != nullptr) {
@@ -282,19 +323,106 @@ gst_my_npp_filter_transform_ip(GstBaseTransform* base, GstBuffer* outbuf) {
     return GST_FLOW_ERROR;
   }
 
-  // !!!! Add some 'random' values to the image !!!!
-  filter->npp_image->copyFrom(in_map_info.data, filter->video_info.width * 3);
+  filter->npp_image31->copyFrom(in_map_info.data, filter->video_info.width * 3);
+
   NppiSize size_ROI = { filter->video_info.width, filter->video_info.height };
-  const Npp8u constArray[] = {
-      static_cast<Npp8u>(filter->frame_num % 180),
-      static_cast<Npp8u>((filter->frame_num + 60) % 180),
-      static_cast<Npp8u>((filter->frame_num + 120) % 180)
-  };
+  NppiPoint offset = { 0, 0 };
+  NppiSize mask_size = { 3, 3 };
+  NppiPoint anchor = { mask_size.width / 2, mask_size.height / 2 };
+  Npp8u thresholdArray[3];
 
-  nppiAddC_8u_C3IRSfs_Ctx(constArray, filter->npp_image->data(),
-      filter->npp_image->pitch(), size_ROI, 1, filter->npp_ctx);
+  // Trying to implement something like
+  // https://github.com/mw46d/Entdecker/blob/master/ROS/mw/mw_video/nodes/image_converter.py#L88 ff
 
-  filter->npp_image->copyTo(in_map_info.data, filter->video_info.width * 3);
+  // npp_image31 is the RGB image
+  // npp_image32 will be the the box filtered image
+  NPP_CHECK_NPP(nppiFilterBoxBorder_8u_C3R_Ctx(filter->npp_image31->data(), filter->npp_image31->pitch(),
+      size_ROI, offset,
+      filter->npp_image32->data(), filter->npp_image32->pitch(),
+      size_ROI, mask_size, anchor, NPP_BORDER_REPLICATE, filter->npp_ctx));
+
+  // npp_image32 is the filtered source image
+  // npp_image33 will be the HSV image to work on
+  NPP_CHECK_NPP(nppiRGBToHSV_8u_C3R_Ctx(filter->npp_image32->data(), filter->npp_image32->pitch(),
+      filter->npp_image33->data(), filter->npp_image33->pitch(),
+      size_ROI, filter->npp_ctx));
+
+  // First Threshold check
+  // npp_image33 is the filtered HSV source image
+  // npp_image11 will be the mat with markes where the pixels are >= (0, 170, 125)
+  thresholdArray[0] = 0;
+  thresholdArray[1] = 170;
+  thresholdArray[2] = 125;
+
+  NPP_CHECK_NPP(nppiCompareC_8u_C3R_Ctx(filter->npp_image33->data(), filter->npp_image33->pitch(),
+      thresholdArray,
+      filter->npp_image11->data(), filter->npp_image11->pitch(),
+      size_ROI, NPP_CMP_GREATER_EQ, filter->npp_ctx));
+
+  // npp_image33 is the filtered HSV source image
+  // npp_image12 will be the mat with markes where the pixels are <= (10, 255, 255)
+  thresholdArray[0] = 10;
+  thresholdArray[1] = 255;
+  thresholdArray[2] = 255;
+
+  NPP_CHECK_NPP(nppiCompareC_8u_C3R_Ctx(filter->npp_image33->data(), filter->npp_image33->pitch(),
+      thresholdArray,
+      filter->npp_image12->data(), filter->npp_image12->pitch(),
+      size_ROI, NPP_CMP_LESS_EQ, filter->npp_ctx));
+
+  // Combine the two sides of the threshold check
+  // npp_image11 &&= npp_image12
+  NPP_CHECK_NPP(nppiAnd_8u_C1IR_Ctx(filter->npp_image12->data(), filter->npp_image12->pitch(),
+      filter->npp_image11->data(), filter->npp_image11->pitch(),
+      size_ROI, filter->npp_ctx));
+
+  // Second Threshold check
+  // npp_image33 is the filtered HSV source image
+  // npp_image12 will be the mat with markes where the pixels are >= (170, 170, 125)
+  thresholdArray[0] = 170; 
+  thresholdArray[1] = 170;
+  thresholdArray[2] = 125;
+
+  NPP_CHECK_NPP(nppiCompareC_8u_C3R_Ctx(filter->npp_image33->data(), filter->npp_image33->pitch(), 
+      thresholdArray, 
+      filter->npp_image12->data(), filter->npp_image12->pitch(),
+      size_ROI, NPP_CMP_GREATER_EQ, filter->npp_ctx));
+ 
+  // npp_image33 is the filtered HSV source image
+  // npp_image13 will be the mat with markes where the pixels are <= (180, 255, 255)
+  thresholdArray[0] = 180;
+  thresholdArray[1] = 255;
+  thresholdArray[2] = 255;
+
+  NPP_CHECK_NPP(nppiCompareC_8u_C3R_Ctx(filter->npp_image33->data(), filter->npp_image33->pitch(),
+      thresholdArray,
+      filter->npp_image13->data(), filter->npp_image13->pitch(),
+      size_ROI, NPP_CMP_LESS_EQ, filter->npp_ctx));
+
+  // Combine the two sides of the threshold check
+  // npp_image12 &&= npp_image13
+  NPP_CHECK_NPP(nppiAnd_8u_C1IR_Ctx(filter->npp_image13->data(), filter->npp_image13->pitch(),
+      filter->npp_image12->data(), filter->npp_image12->pitch(),
+      size_ROI, filter->npp_ctx));
+
+  // Combine both thresholds
+  // npp_image11 ||= npp_image12
+  NPP_CHECK_NPP(nppiOr_8u_C1IR_Ctx(filter->npp_image12->data(), filter->npp_image12->pitch(),
+      filter->npp_image11->data(), filter->npp_image11->pitch(),
+      size_ROI, filter->npp_ctx));
+
+  // Temp!!!!
+  unsigned char* tmp_buffer = static_cast<unsigned char*>(alloca(filter->video_info.width * filter->video_info.height * sizeof(char)));
+  filter->npp_image11->copyTo(tmp_buffer, filter->video_info.width);
+
+  // Just a small part of the image
+  for (int i = 0; i < filter->video_info.width * filter->video_info.height; i++) {
+    int ow = (i / filter->video_info.width) / 3;
+    int oh = (i % filter->video_info.width) / 3;
+    in_map_info.data[(ow * filter->video_info.width + oh) * 3 + 0 ] = tmp_buffer[i];
+    in_map_info.data[(ow * filter->video_info.width + oh) * 3 + 1 ] = tmp_buffer[i];
+    in_map_info.data[(ow * filter->video_info.width + oh) * 3 + 2 ] = tmp_buffer[i];
+  }
 
   return GST_FLOW_OK;
 }
