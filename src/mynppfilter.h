@@ -85,6 +85,13 @@ struct _GstMyNppFilter
   Npp32u* label_maker_dst;
   NppiCompressedMarkerLabelsInfo* label_info_buffer;
 
+  // XXX Optional does not really seem to be optional:-(
+  // XXX for the call to nppiCompressedMarkerLabelsUFInfo_32u_C1R_Ctx()
+  Npp8u* d_contours = nullptr;
+  NppiContourPixelDirectionInfo* d_directions = nullptr;
+  Npp32u* d_counts = nullptr;
+  Npp32u* d_offsets = nullptr;
+
   // GPU ID on which we expect to execute the task
   guint gpu_id;
 

@@ -57,6 +57,7 @@
 
 #include <alloca.h>
 #include <iostream>
+#include <chrono>
 
 #include <gst/controller/controller.h>
 
@@ -261,7 +262,8 @@ gst_my_npp_filter_set_caps(GstBaseTransform* base, GstCaps* incaps,
   cudaMalloc(&filter->label_maker_dst, size_ROI.width * size_ROI.height * sizeof(Npp32u));
 
   unsigned int hpBufferSize3;
-  NPP_CHECK_NPP(nppiCompressedMarkerLabelsUFGetInfoListSize_32u_C1R(101, &hpBufferSize3));
+  int max_num = 101;
+  NPP_CHECK_NPP(nppiCompressedMarkerLabelsUFGetInfoListSize_32u_C1R(max_num, &hpBufferSize3));
   g_print("filter->label_info_buffer size= %d\n", hpBufferSize3);
   cudaMalloc(&filter->label_info_buffer, hpBufferSize3);
 
@@ -269,6 +271,19 @@ gst_my_npp_filter_set_caps(GstBaseTransform* base, GstCaps* incaps,
       filter->label_info_buffer == nullptr) {
     return FALSE;
   }
+
+  // XXX Optional does not really seem to be optional:-(
+  // for nppiCompressedMarkerLabelsUFInfo_32u_C1R_Ctx()
+  cudaMalloc(&filter->d_contours, size_ROI.width * size_ROI.height);
+  cudaMalloc(&filter->d_directions, size_ROI.width * size_ROI.height * sizeof(NppiContourPixelDirectionInfo));
+  cudaMalloc(&filter->d_counts, (max_num + 4) * sizeof(Npp32u));
+  cudaMalloc(&filter->d_offsets, (max_num + 4) * sizeof(Npp32u));
+
+  if (filter->d_contours == nullptr || filter->d_directions == nullptr ||
+      filter->d_counts == nullptr || filter->d_offsets == nullptr) {
+    return FALSE;
+  }
+  g_print("MW gst_my_npp_filter_set_caps() done!\n");
 
   return TRUE;
 }
@@ -338,6 +353,28 @@ gst_my_npp_filter_stop(GstBaseTransform* base) {
     filter->label_info_buffer = nullptr;
   }
 
+  // XXX Optional does not really seem to be optional:-(
+  // for nppiCompressedMarkerLabelsUFInfo_32u_C1R_Ctx()
+  if (filter->d_contours != nullptr) {
+    cudaFree(filter->d_contours);
+    filter->d_contours = nullptr;
+  }
+
+  if (filter->d_directions != nullptr) {
+    cudaFree(filter->d_directions);
+    filter->d_directions = nullptr;
+  }
+
+  if (filter->d_counts != nullptr) {
+    cudaFree(filter->d_counts);
+    filter->d_counts = nullptr;
+  }
+
+  if (filter->d_offsets != nullptr) {
+    cudaFree(filter->d_offsets);
+    filter->d_offsets = nullptr;
+  }
+
   return TRUE;
 }
 
@@ -354,6 +391,11 @@ gst_my_npp_filter_transform_ip(GstBaseTransform* base, GstBuffer* outbuf) {
   }
 
   filter->frame_num++;
+  auto start = std::chrono::high_resolution_clock::now();
+  auto end = start;
+  std::chrono::duration<double> elapsed_duration;
+  static double elapsed = 0.0;
+  static auto thirtyframesstart = start;
 
   memset(&in_map_info, 0, sizeof(in_map_info));
   if (!gst_buffer_map(outbuf, &in_map_info, GST_MAP_WRITE)) {
@@ -365,7 +407,7 @@ gst_my_npp_filter_transform_ip(GstBaseTransform* base, GstBuffer* outbuf) {
 
   NppiSize size_ROI = { filter->video_info.width, filter->video_info.height };
   NppiPoint offset = { 0, 0 };
-  NppiSize mask_size = { 3, 3 };
+  NppiSize mask_size = { 5, 5 };
   NppiPoint anchor = { mask_size.width / 2, mask_size.height / 2 };
   Npp8u thresholdArray[3];
 
@@ -449,6 +491,7 @@ gst_my_npp_filter_transform_ip(GstBaseTransform* base, GstBuffer* outbuf) {
       filter->npp_image11->data(), filter->npp_image11->pitch(),
       size_ROI, filter->npp_ctx));
 
+#ifdef MW_DEBUG
   // Temp!!!!
   unsigned char* tmp_buffer = static_cast<unsigned char*>(alloca(filter->video_info.width * filter->video_info.height * sizeof(char)));
   filter->npp_image11->copyTo(tmp_buffer, filter->video_info.width);
@@ -461,6 +504,7 @@ gst_my_npp_filter_transform_ip(GstBaseTransform* base, GstBuffer* outbuf) {
     in_map_info.data[(ow * filter->video_info.width + oh) * 3 + 1 ] = tmp_buffer[i];
     in_map_info.data[(ow * filter->video_info.width + oh) * 3 + 2 ] = tmp_buffer[i];
   }
+#endif
 
   NPP_CHECK_NPP(nppiLabelMarkersUF_8u32u_C1R_Ctx(filter->npp_image11->data(), filter->npp_image11->pitch(),
       filter->label_maker_dst, size_ROI.width * sizeof(Npp32u),
@@ -471,33 +515,24 @@ gst_my_npp_filter_transform_ip(GstBaseTransform* base, GstBuffer* outbuf) {
   NPP_CHECK_NPP(nppiCompressMarkerLabelsUF_32u_C1IR_Ctx(filter->label_maker_dst, size_ROI.width * sizeof(Npp32u),
       size_ROI, size_ROI.width * size_ROI.height, &max_num, filter->label_maker_buffer, filter->npp_ctx));
 
-  g_print("mw t2a max_num= %d", max_num);
+  // g_print("mw t2a max_num= %d", max_num);
   if (max_num > 100) {
     max_num = 100;
   }
 
-  // XXX Optional does not really seem to be optional:-( 
-  Npp8u* d_contours = nullptr; cudaMalloc(&d_contours, size_ROI.width * size_ROI.height);
-  NppiContourPixelDirectionInfo* d_directions = nullptr; cudaMalloc(&d_directions, size_ROI.width * size_ROI.height * sizeof(NppiContourPixelDirectionInfo));
+  // XXX Optional does not really seem to be optional:-(
   NppiContourTotalsInfo contoursTotalsInfoHost;
-  Npp32u* d_counts = nullptr; cudaMalloc(&d_counts, (max_num + 4) * sizeof(Npp32u));
   Npp32u* contoursPixelCountsListHost = static_cast<Npp32u*>(alloca((max_num  + 4) * sizeof(Npp32u)));
-  Npp32u* d_found = nullptr; cudaMalloc(&d_found, (max_num + 4) * sizeof(Npp32u));
   Npp32u* contoursPixelStartingOffsetHost = static_cast<Npp32u*>(alloca((max_num  + 4) * sizeof(Npp32u)));
-  Npp32u* d_offsets = nullptr; cudaMalloc(&d_offsets, (max_num + 4) * sizeof(Npp32u));
 
   NPP_CHECK_NPP(nppiCompressedMarkerLabelsUFInfo_32u_C1R_Ctx(filter->label_maker_dst, size_ROI.width * sizeof(Npp32u),
       size_ROI, max_num, filter->label_info_buffer,
-      d_contours, size_ROI.width, d_directions, size_ROI.width * sizeof(NppiContourPixelDirectionInfo),
-      &contoursTotalsInfoHost, d_counts, contoursPixelCountsListHost, d_offsets, contoursPixelStartingOffsetHost,
-      filter->npp_ctx)); 
+      filter->d_contours, size_ROI.width, filter->d_directions, size_ROI.width * sizeof(NppiContourPixelDirectionInfo),
+      &contoursTotalsInfoHost, filter->d_counts, contoursPixelCountsListHost, filter->d_offsets,
+      contoursPixelStartingOffsetHost, filter->npp_ctx));
 
   cudaStreamSynchronize(filter->npp_ctx.hStream);
-  cudaFree(d_contours);
-  cudaFree(d_directions);
-  cudaFree(d_counts);
-  cudaFree(d_found);
-  cudaFree(d_offsets);
+
 /*  
   NPP_CHECK_NPP(nppiCompressedMarkerLabelsUFInfo_32u_C1R_Ctx(filter->label_maker_dst, size_ROI.width * sizeof(Npp32u),
       size_ROI, max_num, label_info_buffer,
@@ -505,20 +540,42 @@ gst_my_npp_filter_transform_ip(GstBaseTransform* base, GstBuffer* outbuf) {
       NULL, NULL, NULL, NULL, NULL,
       filter->npp_ctx));
 */
+
   NppiCompressedMarkerLabelsInfo* host_info_list = static_cast<NppiCompressedMarkerLabelsInfo*>(alloca(max_num * sizeof(NppiCompressedMarkerLabelsInfo)));
 
   cudaMemcpy(host_info_list, filter->label_info_buffer, max_num * sizeof(NppiCompressedMarkerLabelsInfo), cudaMemcpyDeviceToHost);
 
-  for (int i = 0; i < max_num; i++) {
-    g_print("MW bounding_box[%u] = (%d, %d, %d, %d)\n", i, host_info_list[i].oMarkerLabelBoundingBox.x, host_info_list[i].oMarkerLabelBoundingBox.y, host_info_list[i].oMarkerLabelBoundingBox.width, host_info_list[i].oMarkerLabelBoundingBox.height);
-    for (int x = host_info_list[i].oMarkerLabelBoundingBox.x; x < host_info_list[i].oMarkerLabelBoundingBox.width; x++) {
-      in_map_info.data[(host_info_list[i].oMarkerLabelBoundingBox.y * size_ROI.width + x) * 3] = 255;
-      in_map_info.data[(host_info_list[i].oMarkerLabelBoundingBox.height* size_ROI.width + x) * 3] = 255;
+  for (int i = 1; i < max_num; i++) {
+    // g_print("MW bounding_box[%u] = (%d, %d, %d, %d)\n", i, host_info_list[i].oMarkerLabelBoundingBox.x, host_info_list[i].oMarkerLabelBoundingBox.y, host_info_list[i].oMarkerLabelBoundingBox.width, host_info_list[i].oMarkerLabelBoundingBox.height);
+
+    int x1 = host_info_list[i].oMarkerLabelBoundingBox.x;
+    int x2 = host_info_list[i].oMarkerLabelBoundingBox.width;
+    int width = x2 - x1;
+    int y1 = host_info_list[i].oMarkerLabelBoundingBox.y;
+    int y2 = host_info_list[i].oMarkerLabelBoundingBox.height;
+    int height = y2 - y1;
+
+    if (width * height > 320 && (float)width / height < 1.0) {
+      for (int x = x1; x < x2; x++) {
+        in_map_info.data[(y1 * size_ROI.width + x) * 3] = 255;
+        in_map_info.data[(y2 * size_ROI.width + x) * 3] = 255;
+      }
+      for (int y = y1; y < y2; y++) {
+        in_map_info.data[(y * size_ROI.width + x1) * 3] = 255;
+        in_map_info.data[(y * size_ROI.width + x2) * 3] = 255;
+      }
     }
-    for (int y = host_info_list[i].oMarkerLabelBoundingBox.y; y < host_info_list[i].oMarkerLabelBoundingBox.height; y++) {
-      in_map_info.data[(host_info_list[i].oMarkerLabelBoundingBox.x + filter->video_info.width * y) * 3] = 255;
-      in_map_info.data[(host_info_list[i].oMarkerLabelBoundingBox.width + filter->video_info.width * y) * 3] = 255;
-    }
+  }
+
+  end = std::chrono::high_resolution_clock::now();
+  elapsed_duration = end - start;
+  elapsed += elapsed_duration.count();
+
+  if (filter->frame_num % 30 == 0) {
+    elapsed_duration = end - thirtyframesstart;
+    thirtyframesstart = end;
+    g_print("MW average processing time (for 30 frames)= %f  (total time %f) \n", elapsed / 30.0, elapsed_duration.count());
+    elapsed = 0.0;
   }
 
   return GST_FLOW_OK;
