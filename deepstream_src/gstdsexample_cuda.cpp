@@ -631,7 +631,7 @@ gst_dsexample_transform_ip(GstBaseTransform* btrans, GstBuffer* inbuf) {
     if (dsexample->frame_num % 30 == 0) {
         elapsed_duration = end - thirtyframesstart;
         thirtyframesstart = end;
-        g_print("MW average processing time (for 30 frames)= %f  (total time %f) \n", elapsed / 30.0, elapsed_duration.count());
+        g_print("MW average processing time (over 30 frames)= %f  FPS= %f\n", elapsed / 30.0, 30.0 / elapsed_duration.count());
         elapsed = 0.0;
     }
 
